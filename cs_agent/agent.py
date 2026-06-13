@@ -5,6 +5,8 @@ from pathlib import Path
 
 from google.adk.agents import LlmAgent
 
+from arg_guard import make_before_tool_callback
+from compute_tool import compute
 from env_toolset import EnvApiToolset
 from rag_tools import kb_search, kb_search_bm25, kb_search_vector
 
@@ -23,23 +25,27 @@ or performing scenario-specific procedures, search the knowledge base:
 - kb_search_vector(query): semantic-only fallback.
 
 Search before you act; procedures, eligibility rules, internal tool names,
-and scenario-specific guidance all live in the knowledge base. If a search
-comes up empty, rephrase and try again before telling the customer you can't
-find the information.
+and scenario-specific guidance all live in the knowledge base. Prefer ONE
+comprehensive kb_search per question (include all relevant keywords) rather
+than many small searches — extra round-trips add latency toward the turn/task
+time limits. If a search comes up empty, rephrase and try again before telling
+the customer you can't find the information.
+
+## Exact Calculations
+
+For ANY money, fee, refund, reward-point, percentage, or total figure, call
+compute(expression) to get the exact value — do NOT do arithmetic in your head,
+as small slips produce wrong tool arguments. Example: compute("(27.00 + 8.00) * 0.5").
 """
 
-# S6 pre-write arg self-check — OFF unless S6_VERIFY=1 (adds one gemini-3.5-flash
-# call per mutating tool call; validate it stays under the 10-min/task cap first).
-_before_tool_callback = None
-if os.environ.get("S6_VERIFY") == "1":
-    from s6_verify import make_before_tool_callback
-
-    _before_tool_callback = make_before_tool_callback()
+# Deterministic pre-write arg guard (always on; no LLM, no latency/429/model-lock
+# impact). The optional LLM verifier (s6_verify) is chained only if S6_VERIFY=1.
+_before_tool_callback = make_before_tool_callback()
 
 root_agent = LlmAgent(
     name="cs_agent",
     model=MODEL,
     instruction=POLICY_PATH.read_text() + RAG_GUIDANCE,
-    tools=[EnvApiToolset(), kb_search, kb_search_bm25, kb_search_vector],
+    tools=[EnvApiToolset(), kb_search, kb_search_bm25, kb_search_vector, compute],
     before_tool_callback=_before_tool_callback,
 )
